@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from uuid import uuid4
 from pathlib import Path
 import os
-
+from services.speech import extract_keywords  
 # 🔑 NEW
 from services.melody import extract_notes
 
@@ -36,15 +36,12 @@ async def upload_hum(file: UploadFile = File(...)):
 
     # 2) 🔑 melody analysis
     notes = extract_notes(str(dst))
+    keywords = extract_keywords(str(dst))          # NEW
 
-    # 3) duration (last note’s end or -1 if none)
-    duration = (
-        round(notes[-1]["start"] + notes[-1]["dur"], 3) if notes else -1.0
-    )
-
+    duration = round(notes[-1]["start"] + notes[-1]["dur"], 3) if notes else -1.0
     return {
         "file": file_id,
         "duration_sec": duration,
-        "keywords": [],          # ← Milestone 4
-        "notes": notes,          # ← now populated!
+        "keywords": keywords,                      # NEW
+        "notes": notes,
     }

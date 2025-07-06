@@ -66,6 +66,11 @@ export default function AudioRecorder() {
           ))}
         </ul>
       )}
+      {serverResp && serverResp.keywords.length > 0 && (
+        <p style={{ marginTop: "1rem" }}>
+          <strong>Seed words:</strong> {serverResp.keywords.join(", ")}
+        </p>
+      )}
     </div>
   );
 }
