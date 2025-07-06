@@ -2,11 +2,13 @@ from fastapi import FastAPI, File, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from uuid import uuid4
 from pathlib import Path
+from dotenv import load_dotenv
+load_dotenv()
 import os
 from services.speech import extract_keywords  
 # 🔑 NEW
 from services.melody import extract_notes
-
+from services.lyric import generate_lyrics
 app = FastAPI()
 
 origins = ["http://localhost:5173", "http://127.0.0.1:5173"]
@@ -17,6 +19,16 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+@app.post("/lyrics")
+def make_lyrics(payload: dict):            # ← no async
+    drafts = generate_lyrics(              # ← no await
+        notes    = payload["notes"],
+        keywords = payload["keywords"],
+        genre    = payload.get("genre","pop"),
+        n        = 3,
+    )
+    return {"drafts": drafts}
+
 
 UPLOAD_DIR = Path("uploads")
 UPLOAD_DIR.mkdir(exist_ok=True)
