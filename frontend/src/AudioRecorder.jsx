@@ -93,14 +93,39 @@ export default function AudioRecorder() {
           <p>
             <strong>Seed words:</strong> {resp.keywords.join(", ")}
           </p>
-          <ul>
-            {resp.notes.map((n, i) => (
-              <li key={i}>
-                MIDI {n.midi} — {n.start.toFixed(2)}-
-                {(n.start + n.dur).toFixed(2)} s
-              </li>
-            ))}
-          </ul>
+          {resp && resp.notes.length > 0 && (
+            <table className="mt-4 text-sm">
+              <thead>
+                <tr>
+                  <th className="px-2 text-left">Note</th>
+                  <th className="px-2 text-left">Start&nbsp;(s)</th>
+                  <th className="px-2 text-left">Len&nbsp;(s)</th>
+                  <th className="px-2">▶︎</th>
+                </tr>
+              </thead>
+              <tbody>
+                {resp.notes.map((n, i) => (
+                  <tr key={i}>
+                    <td className="px-2">
+                      {n.name} <span className="text-gray-400">({n.midi})</span>
+                    </td>
+                    <td className="px-2">{n.start.toFixed(2)}</td>
+                    <td className="px-2">{n.dur.toFixed(2)}</td>
+                    {/* tiny piano-roll bar */}
+                    <td>
+                      <div
+                        style={{
+                          width: `${(n.dur * 80).toFixed(0)}px`,
+                          height: "6px",
+                          background: "#60a5fa",
+                        }}
+                      />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
         </>
       )}
 
