@@ -16,12 +16,16 @@ SAMPLE_RATE = 16000
 FRAME_HOP   = 160
 
 def _webm_to_wav(src_path: str, dst_path: str):
+    """Convert to mono 16-kHz WAV only if needed."""
+    if src_path.lower().endswith(".wav"):
+        # already a wav: just copy & let librosa resample if it’s 48 kHz
+        shutil.copy(src_path, dst_path)
+        return
     subprocess.run(
         [FFMPEG, "-y", "-i", src_path, "-ac", "1", "-ar", str(SAMPLE_RATE), dst_path],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        check=True,
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True
     )
+
 
 
 def hz_to_midi(f):

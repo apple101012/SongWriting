@@ -1,15 +1,19 @@
+// frontend/src/AudioRecorder.jsx
 import { useState, useRef } from "react";
+
+const WAV_MIME = "audio/wav"; // 48-kHz PCM from Chrome
+const WAV_SUPPORTED = MediaRecorder.isTypeSupported(WAV_MIME);
 
 export default function AudioRecorder() {
   const [status, setStatus] = useState("Idle");
-  const [serverResp, setServerResp] = useState(null); // 🟢 state at top level
+  const [serverResp, setServerResp] = useState(null);
   const mediaRecorder = useRef(null);
   const chunks = useRef([]);
 
-  // ───── record control ─────
   const startRecording = async () => {
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    mediaRecorder.current = new MediaRecorder(stream);
+    const options = WAV_SUPPORTED ? { mimeType: WAV_MIME } : {}; // fallback → webm
+    mediaRecorder.current = new MediaRecorder(stream, options);
     mediaRecorder.current.ondataavailable = (e) => chunks.current.push(e.data);
     mediaRecorder.current.onstop = handleStop;
     chunks.current = [];
@@ -17,17 +21,16 @@ export default function AudioRecorder() {
     setStatus("Recording…");
   };
 
-  const stopRecording = () => {
-    mediaRecorder.current?.stop();
-  };
+  const stopRecording = () => mediaRecorder.current?.stop();
 
-  // ───── after recording ends ─────
-  const handleStop = async () => {
+  async function handleStop() {
     setStatus("Uploading…");
-
-    const blob = new Blob(chunks.current, { type: "audio/webm" });
+    const ext = WAV_SUPPORTED ? "wav" : "webm";
+    const blob = new Blob(chunks.current, {
+      type: WAV_SUPPORTED ? WAV_MIME : "audio/webm",
+    });
     const form = new FormData();
-    form.append("file", blob, "hum.webm");
+    form.append("file", blob, `hum.${ext}`);
 
     try {
       const r = await fetch("http://127.0.0.1:8000/upload", {
@@ -35,16 +38,14 @@ export default function AudioRecorder() {
         body: form,
       });
       const data = await r.json();
-      console.log("Server reply:", data);
-      setServerResp(data); // save JSON
+      setServerResp(data);
       setStatus(`Done! Duration ${data.duration_sec.toFixed(2)} s`);
     } catch (err) {
       console.error(err);
       setStatus("Upload failed");
     }
-  };
+  }
 
-  // ───── UI ─────
   return (
     <div className="space-x-2">
       <button onClick={startRecording} disabled={status === "Recording…"}>
@@ -55,21 +56,20 @@ export default function AudioRecorder() {
       </button>
       <span>{status}</span>
 
-      {/* note list */}
       {serverResp && serverResp.notes.length > 0 && (
-        <ul style={{ marginTop: "1rem" }}>
-          {serverResp.notes.map((n, i) => (
-            <li key={i}>
-              MIDI {n.midi} — start {n.start.toFixed(2)} s — dur{" "}
-              {n.dur.toFixed(2)} s
-            </li>
-          ))}
-        </ul>
-      )}
-      {serverResp && serverResp.keywords.length > 0 && (
-        <p style={{ marginTop: "1rem" }}>
-          <strong>Seed words:</strong> {serverResp.keywords.join(", ")}
-        </p>
+        <>
+          <p>
+            <strong>Seed words:</strong> {serverResp.keywords.join(", ")}
+          </p>
+          <ul>
+            {serverResp.notes.map((n, i) => (
+              <li key={i}>
+                MIDI {n.midi} — {n.start.toFixed(2)}-
+                {(n.start + n.dur).toFixed(2)} s
+              </li>
+            ))}
+          </ul>
+        </>
       )}
     </div>
   );
