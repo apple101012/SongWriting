@@ -55,3 +55,37 @@ Return drafts as numbered lines.
     drafts = re.split(r"^\d+\.\s*", text, flags=re.M)[1:]
     return [d.strip() for d in drafts[:n]]
 
+def count_syllables(line: str) -> int:
+    """Very rough syllable estimator (vowels groups)."""
+    return len(re.findall(r"[aeiouy]+", line.lower()))
+
+PROMPT_TEMPLATE = """
+You are a lyric re-writer.
+Write exactly THREE alternative lines that:
+- each contain exactly {sylls} syllables
+- match the genre "{genre}"
+- end with the same punctuation (if any)
+Return the three lines each on its own line with no numbering.
+Old line:
+"{original}"
+"""
+
+def regenerate_line(original: str, genre: str = "pop") -> List[str]:
+    """
+    Return three alternative lines with identical syllable count.
+    Blocking (non-async) call, just like generate_lyrics().
+    """
+    sylls  = count_syllables(original)
+    prompt = PROMPT_TEMPLATE.format(original=original, sylls=sylls, genre=genre)
+
+    resp = client.chat.completions.create(
+        model="llama3-70b-8192",
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0.9,
+    )
+
+    return [
+        l.strip()
+        for l in resp.choices[0].message.content.splitlines()
+        if l.strip()
+    ]

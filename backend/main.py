@@ -57,3 +57,14 @@ async def upload_hum(file: UploadFile = File(...)):
         "keywords": keywords,                      # NEW
         "notes": notes,
     }
+    
+from services.lyric import regenerate_line   # add to imports
+
+
+@app.post("/regenerate_line")
+def regen(payload: dict):                    # ← normal def, not async def
+    """
+    payload = {"line": "...", "genre": "folk"}
+    """
+    alts = regenerate_line(payload["line"], payload.get("genre", "pop"))
+    return {"alts": alts}

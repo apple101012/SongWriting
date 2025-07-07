@@ -1,4 +1,5 @@
 import { useState, useRef } from "react";
+import AltMenu from "./AltMenu";
 
 const WAV_MIME = "audio/wav";
 const WAV_OK = MediaRecorder.isTypeSupported(WAV_MIME);
@@ -9,6 +10,7 @@ export default function AudioRecorder() {
   const [lyrics, setLyrics] = useState(null); // ← NEW: drafts array
   const mediaRecorder = useRef(null);
   const chunks = useRef([]);
+  const [selLine, setSelLine] = useState(null); // currently clicked line idx
 
   // ────────── record control ──────────
   const startRec = async () => {
@@ -132,13 +134,36 @@ export default function AudioRecorder() {
       {lyrics && (
         <div>
           <h3 className="mt-4 font-bold">Lyric drafts</h3>
-          {lyrics.map((d, i) => (
-            <pre
-              key={i}
-              className="bg-gray-100 p-2 rounded mb-2 whitespace-pre-wrap"
-            >
-              {d}
-            </pre>
+          {lyrics.map((text, i) => (
+            <div key={i} className="mb-3 space-y-1">
+              {text.split("\n").map((ln, j) => (
+                <div key={j}>
+                  <span
+                    onClick={() => setSelLine(`${i}-${j}`)}
+                    className="cursor-pointer hover:bg-yellow-100"
+                  >
+                    {ln || "\u00A0"}
+                  </span>
+                  {selLine === `${i}-${j}` && (
+                    <AltMenu
+                      line={ln}
+                      onPick={(newLine) => {
+                        // replace the line
+                        const newDraft = text.split("\n");
+                        newDraft[j] = newLine;
+                        const next = [...lyrics];
+                        next[i] = newDraft.join("\n");
+                        setLyrics(next);
+                        setSelLine(null);
+                      }}
+                    />
+                  )}
+                </div>
+              ))}
+              <button onClick={() => playDraft(text)}>
+                ▶ Hear draft {i + 1}
+              </button>
+            </div>
           ))}
         </div>
       )}
