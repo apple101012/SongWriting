@@ -1,118 +1,107 @@
-# backend/services/melody.py
-#
-# Hums → note list (pitch + timing)  -----------------------------
-# • Converts incoming WebM/WAV to mono-16 kHz WAV (ffmpeg or copy)
-# • Runs torchcrepe for f0 tracking (GPU if available)
-# • Cleans low-confidence frames, quantises to MIDI integers
-# • Groups consecutive identical MIDI numbers into note spans
-# • Adds human-readable note names (C4, F#2, …)
-# ----------------------------------------------------------------
+"""
+melody.py
+----------
+Hum/recording → list[dict]  (midi, name, start, dur)
+Adds latency logs: ffmpeg + pitch.
+"""
 
-import os, shutil, subprocess, tempfile
 from pathlib import Path
+import os, math, shutil, subprocess, tempfile, time, logging
+
 import numpy as np
-import torch, torchcrepe, librosa
+import torch
+import torchcrepe
+import librosa
+import soundfile as sf
+import warnings, torch
+warnings.filterwarnings(
+    "ignore",
+    message="You are using `torch.load` with `weights_only=False`",
+    category=FutureWarning,
+    module="torchcrepe",
+)
 
-# ─── locate ffmpeg ───────────────────────────────────────────────
-REPO_ROOT = Path(__file__).resolve().parents[2]        # adjust depth if layout changes
+
+# ───── logger setup ──────────────────────────────────────────────
+log = logging.getLogger("latency")
+logging.basicConfig(level=logging.INFO, format="[latency] %(message)s")
+
+# ───── constants ────────────────────────────────────────────────
+SAMPLE_RATE = 16_000
+FRAME_HOP   = 160           # 100 fps
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
 EMBEDDED  = REPO_ROOT / "backend" / "bin" / "ffmpeg.exe"
-FFMPEG    = str(EMBEDDED) if EMBEDDED.exists() else (shutil.which("ffmpeg") or "ffmpeg")
+FFMPEG    = str(EMBEDDED) if EMBEDDED.exists() else shutil.which("ffmpeg") or "ffmpeg"
 
-# ─── audio constants ────────────────────────────────────────────
-SAMPLE_RATE = 16_000            # Hz
-FRAME_HOP   = 160               # 100 FPS for torchcrepe
+NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
 
-# ─── helper: convert only when needed ────────────────────────────
-def _webm_to_wav(src_path: str, dst_path: str) -> None:
-    """Ensure mono 16-kHz WAV at dst_path."""
-    if src_path.lower().endswith(".wav"):
-        shutil.copy(src_path, dst_path)
-        return
-    subprocess.run(
-        [FFMPEG, "-y", "-i", src_path, "-ac", "1", "-ar", str(SAMPLE_RATE), dst_path],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        check=True,
-    )
-
-# ─── note-name helpers ───────────────────────────────────────────
-NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F",
-              "F#", "G", "G#", "A", "A#", "B"]
-
+# ───── helpers ──────────────────────────────────────────────────
 def midi_to_name(m: int) -> str:
-    return f"{NOTE_NAMES[m % 12]}{(m // 12) - 1}"       # MIDI 60 → C4
+    return f"{NOTE_NAMES[m % 12]}{(m // 12) - 1}"
 
 def hz_to_midi(f):
-    """Vectorised Hz→MIDI; skips zeros to avoid log2(-inf) runtime warnings."""
-    f = np.where(f == 0, np.nan, f)
-    midi = 69 + 12 * np.log2(f / 440.0)
-    return np.nan_to_num(midi, nan=0)
+    return 69 + 12 * np.log2(f / 440.0)
 
-# ─── main entry point ────────────────────────────────────────────
-def extract_notes(audio_path: str) -> list[dict]:
-    """
-    Returns a list of dicts:
-      { "midi": 49, "name": "A#2", "start": 0.50, "dur": 0.06 }
-    """
-    # 1) convert to WAV in a tmp dir
+def _webm_to_wav(src: str, dst: str):
+    """Convert any audio (webm/wav) → mono 16 kHz wav."""
+    subprocess.run(
+        [FFMPEG, "-y", "-i", src, "-ac", "1", "-ar", str(SAMPLE_RATE), dst],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True
+    )
+
+# ───── core ─────────────────────────────────────────────────────
+def extract_notes(audio_path: str):
+    # 1) ensure wav 16 kHz
+    t0 = time.perf_counter()
     with tempfile.TemporaryDirectory() as tmp:
-        wav = Path(tmp) / "audio.wav"
+        wav = os.path.join(tmp, "audio.wav")
         _webm_to_wav(audio_path, wav)
+        log.info("ffmpeg %.3fs", time.perf_counter() - t0)
 
-        # 2) load signal
-        y, _ = librosa.load(wav, sr=SAMPLE_RATE, mono=True)
+        # 2) load
+        y, _ = librosa.load(wav, sr=SAMPLE_RATE)
 
-    # 3) torchcrepe pitch tracking
+    # 3) pitch tracking (torchcrepe)
+    t1 = time.perf_counter()
     device = "cuda" if torch.cuda.is_available() else "cpu"
+
+    audio = torch.as_tensor(y, dtype=torch.float32, device=device).unsqueeze(0)
+
     f0, pd = torchcrepe.predict(
-        torch.tensor(y).unsqueeze(0).to(device),
+        audio,
         SAMPLE_RATE,
         hop_length=FRAME_HOP,
-        fmin=50,
-        fmax=1050,
+        fmin=50, fmax=1050,
         model="full",
         batch_size=1024,
         pad=True,
         return_periodicity=True,
+        device=device,
     )
-    f0          = f0.squeeze().cpu().numpy()            # Hz
-    confidence  = pd.squeeze().cpu().numpy()
+    log.info("pitch  %.3fs", time.perf_counter() - t1)
 
-    # 4) zero-out low-confidence frames
-    f0[confidence < 0.25] = 0.0
+    f0 = f0.squeeze().cpu().numpy()
+    conf = pd.squeeze().cpu().numpy()
+    f0[conf < 0.25] = 0
+    with np.errstate(divide="ignore"):
+        midi = np.where(f0 > 0, np.round(hz_to_midi(f0)), 0).astype(int)
 
-    # 5) quantise to MIDI ints (0 for unvoiced)
-    midi = np.where(f0 > 0, np.round(hz_to_midi(f0)), 0).astype(int)
-
-    # 6) group consecutive identical MIDI numbers
+    # 4) group frames → notes
     notes, cur = [], None
     for idx, m in enumerate(midi):
-        t = idx * FRAME_HOP / SAMPLE_RATE  # seconds
-
-        if m == 0:                          # silence frame
-            if cur:                         # close running note
+        t = idx * FRAME_HOP / SAMPLE_RATE
+        if m == 0:
+            if cur:
                 cur["dur"] = t - cur["start"]
-                notes.append(cur)
-                cur = None
+                notes.append(cur); cur = None
             continue
-
         if cur and m == cur["midi"]:
-            continue                        # extend current note
-
-        # close previous if pitch changed
+            continue
         if cur:
             cur["dur"] = t - cur["start"]
             notes.append(cur)
-
-        # start new note
-        cur = {
-            "midi":  int(m),
-            "name":  midi_to_name(int(m)),
-            "start": t,
-            "dur":   0.0,
-        }
-
-    # tail note
+        cur = {"midi": int(m), "name": midi_to_name(int(m)), "start": t, "dur": 0.0}
     if cur:
         cur["dur"] = len(midi) * FRAME_HOP / SAMPLE_RATE - cur["start"]
         notes.append(cur)
