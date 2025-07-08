@@ -1,6 +1,6 @@
 import { useState } from "react";
 
-export default function AltMenu({ line, onPick }) {
+export default function AltMenu({ line, pinned, genre, onPick }) {
   const [alts, setAlts] = useState(null);
   const [loading, setLoading] = useState(false);
 
@@ -9,7 +9,7 @@ export default function AltMenu({ line, onPick }) {
     const r = await fetch("http://127.0.0.1:8000/regenerate_line", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ line, genre: "folk" }),
+      body: JSON.stringify({ line, genre, pinned }),
     });
     const { alts } = await r.json();
     setAlts(alts);

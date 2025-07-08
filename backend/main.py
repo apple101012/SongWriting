@@ -20,14 +20,19 @@ app.add_middleware(
     allow_headers=["*"],
 )
 @app.post("/lyrics")
-def make_lyrics(payload: dict):            # ← no async
-    drafts = generate_lyrics(              # ← no await
-        notes    = payload["notes"],
-        keywords = payload["keywords"],
-        genre    = payload.get("genre","pop"),
-        n        = 3,
+def make_lyrics(payload: dict):
+    """
+    Expects: {notes:[…], keywords:[…], genre:str, pinned:[…]}
+    """
+    drafts = generate_lyrics(
+        payload["notes"],
+        payload["keywords"],
+        payload.get("genre", "pop"),
+        3,
+        payload.get("pinned", []),
     )
     return {"drafts": drafts}
+
 
 
 UPLOAD_DIR = Path("uploads")
@@ -62,9 +67,13 @@ from services.lyric import regenerate_line   # add to imports
 
 
 @app.post("/regenerate_line")
-def regen(payload: dict):                    # ← normal def, not async def
+def regen(payload: dict):
     """
-    payload = {"line": "...", "genre": "folk"}
+    Expects: {"line": "...", "genre": "...", "pinned":[...]}
     """
-    alts = regenerate_line(payload["line"], payload.get("genre", "pop"))
+    alts = regenerate_line(
+        payload["line"],
+        payload.get("genre", "pop"),
+        payload.get("pinned", []),
+    )
     return {"alts": alts}
